@@ -105,13 +105,23 @@ class SSD(object):
             net = slim.conv2d(net, 128, [1, 1], scope='conv1x1')
             net = slim.conv2d(net, 256, [3, 3], scope='conv3x3', padding='VALID')
         end_points[end_point] = net
-        
+
         end_point = 'block11'
         with tf.variable_scope(end_point):
             net = slim.conv2d(net, 128, [1, 1], scope='conv1x1')
             net = slim.conv2d(net, 256, [3, 3], scope='conv3x3', padding='VALID')
         end_points[end_point] = net
 
+        # class和location的预测值
+        predictions = []
+        locations = []
+        for i, layer in enumerate(self.ssd_params.feature_layers):
+        	loc, cls = ssd_multibox_layer(self.end_points[layer], self.ssd_params.num_classes
+        								  self.ssd_params.anchor_sizes[i], self.ssd_params.anchor_ratios[i],
+        								  self.ssd_params.normalizations[i], scope=layer+'_box')
+        	predictions.append(slim.softmax(cls))
+        	locations.append(loc)
+        
 
 
 
@@ -125,6 +135,42 @@ class SSD(object):
 		for i in range(len(anchors)-1):
 			anchor_sizes[i] = (anchors[i], anchors[i+1])
 		return anchor_sizes
+
+
+	def ssd_multibox_layer(x, num_classes, sizes, ratios, normalizations=-1, scope='multibox'):
+		# @x: 各层feature map的输出 (例如 None*38*38*128)
+		# @numclasses: 类别
+		# @sizes: reference box的大小
+		# @ratios： 变化的比例
+		# @normalization: 是否normalization, -1则否
+
+		pre_shape = [-1] + x.get_shape().as_list()[1:-1]
+		with tf.variable_scope(scope):
+			if normalizations>0:
+				x = self.l2_norm(x, normalization)
+				print(x)
+			n_anchors = len(sizes) + len(ratios)
+
+			loc_pred = slim.conv2d(x, num_outputs=4*n_anchors, kernel_size=[3, 3], activation_fn=None, scope='conv_loc')
+			loc_pred = tf.reshape(loc_pred, pre_shape+[n_anchors, 4])
+
+			cls_pred = slim.conv2d(x, num_outputs=n_anchors*num_classes, kernel_size=[3, 3], activation_fn=None, scope='con_cls')
+			cls_pred = tf.reshape(cls_pred, pre_shape+[n_anchors, num_classes])
+
+			return loc_pred, cls_pred
+
+
+
+	def l2norm(x, scale, trainable=True, scope='L2Normalization'):
+		n_channels = x.get_shape().as_list()[-1]
+		l2_norm = tf.nn.l2_normalize(x, axis=3, epsilon=1e-12)
+		with tf.variable_scope(scope):
+			gamma = tf.get_variable('gamma', shape=[n_channels,], dtype=tf.float32,
+									initializer=tf.constant_initializer(scale),
+									trainable=trainable)
+		return l2_norm*gamma
+
+
 
 
 
